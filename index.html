@@ -64,6 +64,7 @@
   .controls { flex-wrap: wrap; gap: 8px 28px; margin-top: 16px; font-size: 14px; }
   .controls label { display: flex; align-items: center; gap: 10px; }
   .controls input[type=range] { width: 180px; accent-color: var(--accent); }
+  .controls select { font: inherit; font-size: 14px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
   .controls output { width: 2.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
   .controls .reset { padding: 4px 10px; font-size: 13px; }
 
@@ -103,7 +104,16 @@
     </div>
     <div class="controls">
       <label>模糊 <input type="range" id="blur" min="0" max="100"> <output id="blurOut"></output></label>
-      <label>接縫柔化 <input type="range" id="feather" min="0" max="100"> <output id="featherOut"></output></label>
+      <label>接縫做法
+        <select id="method">
+          <option value="feather">A 漸層融合</option>
+          <option value="progressive">B 漸進模糊</option>
+          <option value="stretch">C 邊緣拉伸</option>
+          <option value="backdrop">E 整張模糊當背景</option>
+        </select>
+      </label>
+      <label id="featherRow">接縫柔化 <input type="range" id="feather" min="0" max="100"> <output id="featherOut"></output></label>
+      <label>D 陰影 <input type="range" id="shadow" min="0" max="100"> <output id="shadowOut"></output></label>
       <button class="reset" id="reset">回預設</button>
       <button class="reset" id="peek" aria-pressed="false" title="按住空白鍵也可以">預覽（按住空白鍵）</button>
     </div>
@@ -120,7 +130,7 @@
 <script>
 const CROP_RATIO = 3 / 2;
 const OG_RATIO = 1200 / 630;          // OG 圖標準比例，約 1.905
-const DEFAULTS = { blur: 40, feather: 40 };
+const DEFAULTS = { method: 'feather', blur: 40, feather: 40, shadow: 0 };
 const PREVIEW_MAX_H = 720;            // 預覽用縮小版算，下載才用原尺寸
 const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const SUBTITLE = {
@@ -131,7 +141,7 @@ const SUBTITLE = {
 const $ = (id) => document.getElementById(id);
 const app = $('app'), drop = $('drop'), fileInput = $('file');
 const preview = $('preview'), frame = $('frame'), info = $('info');
-const canvasEl = $('extendCanvas'), blurEl = $('blur'), featherEl = $('feather');
+const canvasEl = $('extendCanvas'), blurEl = $('blur'), featherEl = $('feather'), shadowEl = $('shadow'), methodEl = $('method');
 
 let mode = 'crop';
 let current = null; // { file, img, url }
@@ -201,46 +211,109 @@ function drawMirror(ctx, src, W, H, destX, width, side) {
   ctx.restore();
 }
 
-// 底圖＝原圖＋兩側鏡像，整張一起模糊
-// 原圖疊回中間時，左右邊緣用漸層淡出，讓清楚的部分慢慢糊進底圖，接縫就不會硬
+function blurCanvas(canvas, blur) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const sigma = (blur / 100) * canvas.height * 0.06;
+  boxBlur(img.data, canvas.width, canvas.height, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
+function blank(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+}
+
+// 對 canvas 套水平方向的透明度遮罩；stops 是 [位置 0–1, 不透明度] 的清單
+function maskX(canvas, stops) {
+  const ctx = canvas.getContext('2d');
+  const g = ctx.createLinearGradient(0, 0, canvas.width, 0);
+  for (const [pos, a] of stops) g.addColorStop(Math.min(1, Math.max(0, pos)), `rgba(0,0,0,${a})`);
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.globalCompositeOperation = 'source-over';
+  return canvas;
+}
+
+// 原圖＋兩側鏡像（還沒模糊）
+function mirrored(src, W, H, ext, outW) {
+  const c = blank(outW, H);
+  const ctx = c.getContext('2d');
+  drawMirror(ctx, src, W, H, 0, ext, 'left');
+  drawMirror(ctx, src, W, H, ext + W, outW - W - ext, 'right');
+  ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+  return c;
+}
+
+// 四種接縫做法；都回傳完整的 outW×H 畫面（原圖已經疊好）
+const METHODS = {
+  // A 漸層融合：整張（原圖＋鏡像）一起模糊當底，原圖左右邊緣淡出疊回去
+  feather(src, W, H, ext, outW, o) {
+    const out = blurCanvas(mirrored(src, W, H, ext, outW), o.blur);
+    const sharp = blank(W, H);
+    sharp.getContext('2d').drawImage(src, 0, 0, W, H);
+    const t = Math.min(0.5, (o.feather / 100) * 0.15);
+    if (t > 0) maskX(sharp, [[0, 0], [t, 1], [1 - t, 1], [1, 0]]);
+    out.getContext('2d').drawImage(sharp, ext, 0);
+    return out;
+  },
+  // B 漸進模糊：原圖完全清楚；延伸區在接縫處是清楚的鏡像，越往外越糊
+  progressive(src, W, H, ext, outW, o) {
+    const out = blurCanvas(mirrored(src, W, H, ext, outW), o.blur);
+    const sharp = mirrored(src, W, H, ext, outW);
+    const l = ext / outW, r = (ext + W) / outW;
+    maskX(sharp, [[0, 0], [l, 1], [r, 1], [1, 0]]);
+    out.getContext('2d').drawImage(sharp, 0, 0);
+    return out;
+  },
+  // C 邊緣拉伸：把原圖最邊緣一排像素往外拉成條紋，再模糊；原圖完全清楚
+  stretch(src, W, H, ext, outW, o) {
+    const out = blank(outW, H);
+    const ctx = out.getContext('2d');
+    ctx.drawImage(src, 0, 0, 1, H, 0, 0, ext, H);
+    ctx.drawImage(src, W - 1, 0, 1, H, ext + W, 0, outW - W - ext, H);
+    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+    blurCanvas(out, o.blur);
+    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+    return out;
+  },
+  // E 整張模糊當背景：整張圖放大鋪滿再模糊，原圖疊在中間
+  backdrop(src, W, H, ext, outW, o) {
+    const out = blank(outW, H);
+    const ctx = out.getContext('2d');
+    const scale = outW / W, bh = H * scale;
+    ctx.drawImage(src, 0, (H - bh) / 2, outW, bh);
+    blurCanvas(out, Math.max(o.blur, 20));
+    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+    return out;
+  },
+};
+
+// D 卡片陰影：接縫外側往外一段由深變淺，可以疊在任何做法上
+function drawShadow(ctx, W, H, ext, outW, shadow) {
+  if (shadow <= 0) return;
+  const a = (shadow / 100) * 0.55, s = Math.min(ext, H * 0.08);
+  const l = ctx.createLinearGradient(ext, 0, ext - s, 0);
+  l.addColorStop(0, `rgba(0,0,0,${a})`);
+  l.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = l;
+  ctx.fillRect(ext - s, 0, s, H);
+  const r = ctx.createLinearGradient(ext + W, 0, ext + W + s, 0);
+  r.addColorStop(0, `rgba(0,0,0,${a})`);
+  r.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = r;
+  ctx.fillRect(ext + W, 0, s, H);
+}
+
 // src 可以是原圖或縮小過的預覽版；回傳完成的 canvas
 function renderExtend(src, W, H, opts) {
-  const { blur, feather } = opts;
   const { outW, ext } = extendSize(W, H);
-  const rightW = outW - W - ext;
-  const out = document.createElement('canvas');
-  out.width = outW;
-  out.height = H;
-  const ctx = out.getContext('2d');
-
-  drawMirror(ctx, src, W, H, 0, ext, 'left');
-  drawMirror(ctx, src, W, H, ext + W, rightW, 'right');
-  ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-
-  const img = ctx.getImageData(0, 0, outW, H);
-  const sigma = (blur / 100) * H * 0.06;
-  boxBlur(img.data, outW, H, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
-  ctx.putImageData(img, 0, 0);
-
-  // 原圖：左右邊緣各 f px 從透明漸變到不透明
-  const f = Math.round((feather / 100) * W * 0.15);
-  const sharp = document.createElement('canvas');
-  sharp.width = W;
-  sharp.height = H;
-  const sctx = sharp.getContext('2d');
-  sctx.drawImage(src, 0, 0, W, H);
-  if (f > 0) {
-    const g = sctx.createLinearGradient(0, 0, W, 0);
-    const t = Math.min(0.5, f / W);
-    g.addColorStop(0, 'rgba(0,0,0,0)');
-    g.addColorStop(t, 'rgba(0,0,0,1)');
-    g.addColorStop(1 - t, 'rgba(0,0,0,1)');
-    g.addColorStop(1, 'rgba(0,0,0,0)');
-    sctx.globalCompositeOperation = 'destination-in';
-    sctx.fillStyle = g;
-    sctx.fillRect(0, 0, W, H);
-  }
-  ctx.drawImage(sharp, ext, 0);
+  const out = METHODS[opts.method](src, W, H, ext, outW, opts);
+  drawShadow(out.getContext('2d'), W, H, ext, outW, opts.shadow);
   return { canvas: out, ext };
 }
 
@@ -366,12 +439,15 @@ function download() {
 }
 
 function effectOpts() {
-  return { blur: +blurEl.value, feather: +featherEl.value };
+  return { method: methodEl.value, blur: +blurEl.value, feather: +featherEl.value, shadow: +shadowEl.value };
 }
 
 function syncOutputs() {
   $('blurOut').textContent = blurEl.value;
   $('featherOut').textContent = featherEl.value;
+  $('shadowOut').textContent = shadowEl.value;
+  // 接縫柔化只有 A 用得到
+  $('featherRow').style.display = methodEl.value === 'feather' ? '' : 'none';
 }
 
 /* ---------- 事件 ---------- */
@@ -389,7 +465,7 @@ window.addEventListener('paste', (e) => {
 });
 
 let pending = 0;
-[blurEl, featherEl].forEach((el) => el.addEventListener('input', () => {
+[blurEl, featherEl, shadowEl, methodEl].forEach((el) => el.addEventListener('input', () => {
   syncOutputs();
   cancelAnimationFrame(pending);
   pending = requestAnimationFrame(refresh);
@@ -426,6 +502,8 @@ $('again').addEventListener('click', () => {
 function applyDefaults() {
   blurEl.value = DEFAULTS.blur;
   featherEl.value = DEFAULTS.feather;
+  shadowEl.value = DEFAULTS.shadow;
+  methodEl.value = DEFAULTS.method;
   syncOutputs();
 }
 applyDefaults();
