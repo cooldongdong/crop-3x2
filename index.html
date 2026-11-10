@@ -52,6 +52,7 @@
     background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,255,255,.08) 6px 12px);
   }
   .keep { position: absolute; outline: 2px solid #fff; outline-offset: -1px; pointer-events: none; }
+  .peek .seam { display: none; }
   .seam { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(255,255,255,.7); pointer-events: none; }
 
   /* 模式切換：crop 顯示 img＋遮罩，extend 顯示 canvas＋滑桿 */
@@ -102,8 +103,10 @@
     </div>
     <div class="controls">
       <label>模糊 <input type="range" id="blur" min="0" max="100"> <output id="blurOut"></output></label>
+      <label>接縫柔化 <input type="range" id="feather" min="0" max="100"> <output id="featherOut"></output></label>
       <label>毛玻璃 <input type="range" id="frost" min="0" max="100"> <output id="frostOut"></output></label>
       <button class="reset" id="reset">回預設</button>
+      <button class="reset" id="peek" aria-pressed="false" title="按住空白鍵也可以">預覽（按住空白鍵）</button>
     </div>
     <div class="bar">
       <div class="info" id="info"></div>
@@ -118,18 +121,18 @@
 <script>
 const CROP_RATIO = 3 / 2;
 const OG_RATIO = 1200 / 630;          // OG 圖標準比例，約 1.905
-const DEFAULTS = { blur: 40, frost: 40 };
+const DEFAULTS = { blur: 40, feather: 40, frost: 0 };
 const PREVIEW_MAX_H = 720;            // 預覽用縮小版算，下載才用原尺寸
 const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const SUBTITLE = {
   crop: '置中裁成 3:2，只留中間。斜線區域會被切掉。',
-  extend: '原圖完整放中間，左右用邊緣鏡像、模糊、毛玻璃補滿成 1.91:1。虛線是原圖的邊界。',
+  extend: '原圖完整放中間，左右用邊緣鏡像、模糊補滿成 1.91:1。虛線是原圖的邊界，按住空白鍵可以先藏起來。',
 };
 
 const $ = (id) => document.getElementById(id);
 const app = $('app'), drop = $('drop'), fileInput = $('file');
 const preview = $('preview'), frame = $('frame'), info = $('info');
-const canvasEl = $('extendCanvas'), blurEl = $('blur'), frostEl = $('frost');
+const canvasEl = $('extendCanvas'), blurEl = $('blur'), frostEl = $('frost'), featherEl = $('feather');
 
 let mode = 'crop';
 let current = null; // { file, img, url }
@@ -197,45 +200,72 @@ function rng(seed) {
   };
 }
 
-// 做一側的延伸條：取原圖邊緣同寬一條 → 鏡像 → 模糊 → 毛玻璃（疊白＋細顆粒）
-function makeStrip(src, W, H, ext, side, blur, frost) {
-  const sw = Math.min(ext, W); // 原圖比延伸還窄時，拿整張去拉
-  const strip = document.createElement('canvas');
-  strip.width = ext;
-  strip.height = H;
-  const ctx = strip.getContext('2d');
-  ctx.translate(ext, 0);
-  ctx.scale(-1, 1);
+// 把原圖邊緣同寬的一條鏡像貼到外側；接縫兩邊的像素因此是連續的
+function drawMirror(ctx, src, W, H, destX, width, side) {
+  if (width <= 0) return;
+  const sw = Math.min(width, W); // 原圖比延伸還窄時，拿整張去拉
   const sx = side === 'left' ? 0 : W - sw;
-  ctx.drawImage(src, sx, 0, sw, H, 0, 0, ext, H);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-  const img = ctx.getImageData(0, 0, ext, H);
-  const sigma = (blur / 100) * H * 0.06;
-  boxBlur(img.data, ext, H, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
-
-  const white = (frost / 100) * 0.45;
-  const grain = (frost / 100) * 22;
-  const rand = rng(side === 'left' ? 1 : 2);
-  const d = img.data;
-  for (let i = 0; i < d.length; i += 4) {
-    const n = (rand() - 0.5) * grain;
-    for (let c = 0; c < 3; c++) d[i + c] = d[i + c] * (1 - white) + 255 * white + n;
-  }
-  ctx.putImageData(img, 0, 0);
-  return strip;
+  ctx.save();
+  ctx.translate(destX + width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(src, sx, 0, sw, H, 0, 0, width, H);
+  ctx.restore();
 }
 
+// 底圖＝原圖＋兩側鏡像，整張一起模糊；兩側再疊毛玻璃（白＋細顆粒）
+// 原圖疊回中間時，左右邊緣用漸層淡出，讓清楚的部分慢慢糊進底圖，接縫就不會硬
 // src 可以是原圖或縮小過的預覽版；回傳完成的 canvas
-function renderExtend(src, W, H, blur, frost) {
+function renderExtend(src, W, H, opts) {
+  const { blur, frost, feather } = opts;
   const { outW, ext } = extendSize(W, H);
+  const rightW = outW - W - ext;
   const out = document.createElement('canvas');
   out.width = outW;
   out.height = H;
   const ctx = out.getContext('2d');
-  ctx.drawImage(makeStrip(src, W, H, ext, 'left', blur, frost), 0, 0);
-  ctx.drawImage(makeStrip(src, W, H, outW - W - ext, 'right', blur, frost), ext + W, 0);
+
+  drawMirror(ctx, src, W, H, 0, ext, 'left');
+  drawMirror(ctx, src, W, H, ext + W, rightW, 'right');
   ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+
+  const img = ctx.getImageData(0, 0, outW, H);
+  const sigma = (blur / 100) * H * 0.06;
+  boxBlur(img.data, outW, H, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
+  if (frost > 0) {
+    const white = (frost / 100) * 0.45;
+    const grain = (frost / 100) * 22;
+    const rand = rng(1);
+    const d = img.data;
+    for (let y = 0; y < H; y++) {
+      for (let x = 0; x < outW; x++) {
+        if (x >= ext && x < ext + W) continue;
+        const i = (y * outW + x) * 4;
+        const n = (rand() - 0.5) * grain;
+        for (let c = 0; c < 3; c++) d[i + c] = d[i + c] * (1 - white) + 255 * white + n;
+      }
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+
+  // 原圖：左右邊緣各 f px 從透明漸變到不透明
+  const f = Math.round((feather / 100) * W * 0.15);
+  const sharp = document.createElement('canvas');
+  sharp.width = W;
+  sharp.height = H;
+  const sctx = sharp.getContext('2d');
+  sctx.drawImage(src, 0, 0, W, H);
+  if (f > 0) {
+    const g = sctx.createLinearGradient(0, 0, W, 0);
+    const t = Math.min(0.5, f / W);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(t, 'rgba(0,0,0,1)');
+    g.addColorStop(1 - t, 'rgba(0,0,0,1)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    sctx.globalCompositeOperation = 'destination-in';
+    sctx.fillStyle = g;
+    sctx.fillRect(0, 0, W, H);
+  }
+  ctx.drawImage(sharp, ext, 0);
   return { canvas: out, ext };
 }
 
@@ -280,7 +310,7 @@ function refresh() {
   }
   preview.style.display = '';
   const p = previewSource(img);
-  const { canvas, ext } = renderExtend(p.src, p.W, p.H, +blurEl.value, +frostEl.value);
+  const { canvas, ext } = renderExtend(p.src, p.W, p.H, effectOpts());
   canvasEl.width = canvas.width;
   canvasEl.height = canvas.height;
   canvasEl.getContext('2d').drawImage(canvas, 0, 0);
@@ -342,7 +372,7 @@ function download() {
   const { file, img } = current;
   const canvas = mode === 'crop'
     ? renderCrop(img)
-    : renderExtend(img, img.naturalWidth, img.naturalHeight, +blurEl.value, +frostEl.value).canvas;
+    : renderExtend(img, img.naturalWidth, img.naturalHeight, effectOpts()).canvas;
 
   const type = OUTPUT_TYPES.includes(file.type) ? file.type : 'image/png';
   const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[type];
@@ -360,8 +390,13 @@ function download() {
   }, type, 0.95);
 }
 
+function effectOpts() {
+  return { blur: +blurEl.value, frost: +frostEl.value, feather: +featherEl.value };
+}
+
 function syncOutputs() {
   $('blurOut').textContent = blurEl.value;
+  $('featherOut').textContent = featherEl.value;
   $('frostOut').textContent = frostEl.value;
 }
 
@@ -380,16 +415,32 @@ window.addEventListener('paste', (e) => {
 });
 
 let pending = 0;
-[blurEl, frostEl].forEach((el) => el.addEventListener('input', () => {
+[blurEl, frostEl, featherEl].forEach((el) => el.addEventListener('input', () => {
   syncOutputs();
   cancelAnimationFrame(pending);
   pending = requestAnimationFrame(refresh);
 }));
 $('reset').addEventListener('click', () => {
-  blurEl.value = DEFAULTS.blur;
-  frostEl.value = DEFAULTS.frost;
-  syncOutputs();
+  applyDefaults();
   refresh();
+});
+
+// 預覽：藏起虛線。按鈕切換；空白鍵按住時暫時隱藏、放開恢復
+let peekLocked = false;
+const setPeek = (on) => {
+  app.classList.toggle('peek', on);
+  $('peek').setAttribute('aria-pressed', on);
+};
+$('peek').addEventListener('click', () => { peekLocked = !peekLocked; setPeek(peekLocked); });
+window.addEventListener('keydown', (e) => {
+  if (e.code !== 'Space' || e.target.matches('input[type=text], textarea')) return;
+  e.preventDefault(); // 別讓空白鍵捲動頁面或按到聚焦中的按鈕
+  if (!e.repeat) setPeek(true);
+});
+window.addEventListener('keyup', (e) => {
+  if (e.code !== 'Space') return;
+  e.preventDefault();
+  setPeek(peekLocked);
 });
 $('download').addEventListener('click', download);
 $('again').addEventListener('click', () => {
@@ -398,9 +449,13 @@ $('again').addEventListener('click', () => {
   fileInput.click();
 });
 
-blurEl.value = DEFAULTS.blur;
-frostEl.value = DEFAULTS.frost;
-syncOutputs();
+function applyDefaults() {
+  blurEl.value = DEFAULTS.blur;
+  featherEl.value = DEFAULTS.feather;
+  frostEl.value = DEFAULTS.frost;
+  syncOutputs();
+}
+applyDefaults();
 setMode(location.hash === '#extend' ? 'extend' : 'crop');
 </script>
 </body>
