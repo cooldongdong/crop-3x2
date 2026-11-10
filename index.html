@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>裁成 3:2</title>
+<style>
+  :root {
+    --bg: #f6f5f2;
+    --fg: #1d1d1b;
+    --muted: #6b6a66;
+    --line: #d9d7d0;
+    --accent: #1d1d1b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --fg: #ecebe6; --muted: #9a9892; --line: #34332f; --accent: #ecebe6; }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.6 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
+  }
+  main { max-width: 880px; margin: 0 auto; padding: 48px 20px; }
+  h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
+  .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+
+  .drop {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 6px; min-height: 260px; padding: 24px;
+    border: 1.5px dashed var(--line); border-radius: 12px;
+    cursor: pointer; text-align: center; transition: border-color .15s, background .15s;
+  }
+  .drop:hover, .drop.over { border-color: var(--fg); background: color-mix(in srgb, var(--fg) 4%, transparent); }
+  .drop strong { font-weight: 600; }
+  .drop span { color: var(--muted); font-size: 14px; }
+
+  .stage { display: none; }
+  .has-image .drop { display: none; }
+  .has-image .stage { display: block; }
+
+  .frame { position: relative; line-height: 0; border-radius: 8px; overflow: hidden; }
+  .frame img { width: 100%; height: auto; display: block; }
+  .cut {
+    position: absolute; background: rgba(0,0,0,.55);
+    background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,255,255,.08) 6px 12px);
+  }
+  .keep { position: absolute; outline: 2px solid #fff; outline-offset: -1px; pointer-events: none; }
+
+  .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+  .info { flex: 1; min-width: 200px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .info b { color: var(--fg); font-weight: 600; }
+  button {
+    font: inherit; font-size: 15px; padding: 9px 18px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: transparent; color: var(--fg);
+  }
+  button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
+  button:hover { filter: brightness(1.08); }
+  .note { color: var(--muted); font-size: 13px; margin-top: 28px; }
+  input[type=file] { display: none; }
+</style>
+</head>
+<body>
+<main id="app">
+  <h1>裁成 3:2</h1>
+  <p class="sub">置中裁切，只留中間。照片不會離開你的電腦。</p>
+
+  <label class="drop" id="drop">
+    <input type="file" id="file" accept="image/*">
+    <strong>把照片拖進來，或點這裡選檔</strong>
+    <span>也可以直接貼上（⌘V / Ctrl+V）</span>
+  </label>
+
+  <section class="stage">
+    <div class="frame" id="frame">
+      <img id="preview" alt="">
+    </div>
+    <div class="bar">
+      <div class="info" id="info"></div>
+      <button id="again">換一張</button>
+      <button class="primary" id="download">下載</button>
+    </div>
+  </section>
+
+  <p class="note">斜線區域會被切掉。輸出沿用原檔格式（JPG、PNG、WebP），其他格式會存成 PNG。</p>
+</main>
+
+<script>
+const RATIO = 3 / 2;
+const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+
+const $ = (id) => document.getElementById(id);
+const app = $('app'), drop = $('drop'), fileInput = $('file');
+const preview = $('preview'), frame = $('frame'), info = $('info');
+
+let current = null; // { file, img, crop }
+
+// 置中裁成 3:2：太寬切左右，太高切上下
+function centerCrop(w, h) {
+  if (w / h > RATIO) {
+    const cw = Math.round(h * RATIO);
+    return { x: Math.floor((w - cw) / 2), y: 0, w: cw, h };
+  }
+  const ch = Math.round(w / RATIO);
+  return { x: 0, y: Math.floor((h - ch) / 2), w, h: ch };
+}
+
+function load(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    if (current) URL.revokeObjectURL(current.url);
+    const crop = centerCrop(img.naturalWidth, img.naturalHeight);
+    current = { file, img, crop, url };
+    preview.src = url;
+    drawOverlay();
+    const ratio = (img.naturalWidth / img.naturalHeight).toFixed(2);
+    info.innerHTML = `原圖 ${img.naturalWidth}×${img.naturalHeight}（${ratio}:1）→ <b>${crop.w}×${crop.h}</b>`;
+    app.classList.add('has-image');
+  };
+  img.onerror = () => alertInline('這個檔案讀不出來，換一張試試。');
+  img.src = url;
+}
+
+function drawOverlay() {
+  frame.querySelectorAll('.cut, .keep').forEach((el) => el.remove());
+  const { img, crop } = current;
+  const W = img.naturalWidth, H = img.naturalHeight;
+  const pct = (v, t) => (v / t * 100) + '%';
+  const add = (cls, l, t, w, h) => {
+    const d = document.createElement('div');
+    d.className = cls;
+    Object.assign(d.style, { left: pct(l, W), top: pct(t, H), width: pct(w, W), height: pct(h, H) });
+    frame.appendChild(d);
+  };
+  if (crop.x > 0) {
+    add('cut', 0, 0, crop.x, H);
+    add('cut', crop.x + crop.w, 0, W - crop.x - crop.w, H);
+  }
+  if (crop.y > 0) {
+    add('cut', 0, 0, W, crop.y);
+    add('cut', 0, crop.y + crop.h, W, H - crop.y - crop.h);
+  }
+  add('keep', crop.x, crop.y, crop.w, crop.h);
+}
+
+function alertInline(msg) {
+  drop.querySelector('span').textContent = msg;
+}
+
+function download() {
+  const { file, img, crop } = current;
+  const canvas = document.createElement('canvas');
+  canvas.width = crop.w;
+  canvas.height = crop.h;
+  canvas.getContext('2d').drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+
+  const type = OUTPUT_TYPES.includes(file.type) ? file.type : 'image/png';
+  const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[type];
+  const base = (file.name || 'image').replace(/\.[^.]+$/, '');
+
+  canvas.toBlob((blob) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `${base}-3x2.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  }, type, 0.95);
+}
+
+fileInput.addEventListener('change', () => load(fileInput.files[0]));
+['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', (e) => load(e.dataTransfer.files[0]));
+// 整頁都能接拖放，避免拖偏了瀏覽器直接打開圖片
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', (e) => { e.preventDefault(); load(e.dataTransfer.files[0]); });
+window.addEventListener('paste', (e) => {
+  const item = [...e.clipboardData.items].find((i) => i.type.startsWith('image/'));
+  if (item) load(item.getAsFile());
+});
+$('download').addEventListener('click', download);
+$('again').addEventListener('click', () => {
+  app.classList.remove('has-image');
+  fileInput.value = '';
+  fileInput.click();
+});
+</script>
+</body>
+</html>
