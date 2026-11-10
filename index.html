@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>裁成 3:2</title>
+<title>3:2 ⇄ 1.91:1</title>
 <style>
   :root {
     --bg: #f6f5f2;
@@ -23,9 +23,13 @@
     color: var(--fg);
     font: 16px/1.6 -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC", sans-serif;
   }
-  main { max-width: 880px; margin: 0 auto; padding: 48px 20px; }
+  main { max-width: 960px; margin: 0 auto; padding: 48px 20px; }
   h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
-  .sub { color: var(--muted); margin: 0 0 28px; font-size: 14px; }
+  .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
+
+  .modes { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 3px; margin-bottom: 20px; }
+  .modes button { border: 0; border-radius: 6px; padding: 6px 14px; color: var(--muted); }
+  .modes button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
 
   .drop {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -42,12 +46,25 @@
   .has-image .stage { display: block; }
 
   .frame { position: relative; line-height: 0; border-radius: 8px; overflow: hidden; }
-  .frame img { width: 100%; height: auto; display: block; }
+  .frame img, .frame canvas { width: 100%; height: auto; display: block; }
   .cut {
     position: absolute; background: rgba(0,0,0,.55);
     background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,255,255,.08) 6px 12px);
   }
   .keep { position: absolute; outline: 2px solid #fff; outline-offset: -1px; pointer-events: none; }
+  .seam { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(255,255,255,.7); pointer-events: none; }
+
+  /* 模式切換：crop 顯示 img＋遮罩，extend 顯示 canvas＋滑桿 */
+  #extendCanvas, .controls { display: none; }
+  .mode-extend #preview, .mode-extend .cut, .mode-extend .keep { display: none; }
+  .mode-extend #extendCanvas { display: block; }
+  .mode-extend .controls { display: flex; }
+
+  .controls { flex-wrap: wrap; gap: 8px 28px; margin-top: 16px; font-size: 14px; }
+  .controls label { display: flex; align-items: center; gap: 10px; }
+  .controls input[type=range] { width: 180px; accent-color: var(--accent); }
+  .controls output { width: 2.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .controls .reset { padding: 4px 10px; font-size: 13px; }
 
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
   .info { flex: 1; min-width: 200px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -57,25 +74,36 @@
     border: 1px solid var(--line); background: transparent; color: var(--fg);
   }
   button.primary { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 600; }
-  button:hover { filter: brightness(1.08); }
+  button:disabled { opacity: .4; cursor: not-allowed; }
   .note { color: var(--muted); font-size: 13px; margin-top: 28px; }
   input[type=file] { display: none; }
 </style>
 </head>
 <body>
-<main id="app">
-  <h1>裁成 3:2</h1>
-  <p class="sub">置中裁切，只留中間。照片不會離開你的電腦。</p>
+<main id="app" class="mode-crop">
+  <h1>3:2 ⇄ 1.91:1</h1>
+  <p class="sub" id="sub"></p>
+
+  <div class="modes" role="group" aria-label="模式">
+    <button data-mode="crop" aria-pressed="true">裁成 3:2</button>
+    <button data-mode="extend" aria-pressed="false">延伸成 1.91:1</button>
+  </div>
 
   <label class="drop" id="drop">
     <input type="file" id="file" accept="image/*">
     <strong>把照片拖進來，或點這裡選檔</strong>
-    <span>也可以直接貼上（⌘V / Ctrl+V）</span>
+    <span id="dropHint">也可以直接貼上（⌘V / Ctrl+V）</span>
   </label>
 
   <section class="stage">
     <div class="frame" id="frame">
       <img id="preview" alt="">
+      <canvas id="extendCanvas"></canvas>
+    </div>
+    <div class="controls">
+      <label>模糊 <input type="range" id="blur" min="0" max="100"> <output id="blurOut"></output></label>
+      <label>毛玻璃 <input type="range" id="frost" min="0" max="100"> <output id="frostOut"></output></label>
+      <button class="reset" id="reset">回預設</button>
     </div>
     <div class="bar">
       <div class="info" id="info"></div>
@@ -84,51 +112,190 @@
     </div>
   </section>
 
-  <p class="note">斜線區域會被切掉。輸出沿用原檔格式（JPG、PNG、WebP），其他格式會存成 PNG。</p>
+  <p class="note">照片不會離開你的電腦。輸出沿用原檔格式（JPG、PNG、WebP），其他格式會存成 PNG。</p>
 </main>
 
 <script>
-const RATIO = 3 / 2;
+const CROP_RATIO = 3 / 2;
+const OG_RATIO = 1200 / 630;          // OG 圖標準比例，約 1.905
+const DEFAULTS = { blur: 40, frost: 40 };
+const PREVIEW_MAX_H = 720;            // 預覽用縮小版算，下載才用原尺寸
 const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
+const SUBTITLE = {
+  crop: '置中裁成 3:2，只留中間。斜線區域會被切掉。',
+  extend: '原圖完整放中間，左右用邊緣鏡像、模糊、毛玻璃補滿成 1.91:1。虛線是原圖的邊界。',
+};
 
 const $ = (id) => document.getElementById(id);
 const app = $('app'), drop = $('drop'), fileInput = $('file');
 const preview = $('preview'), frame = $('frame'), info = $('info');
+const canvasEl = $('extendCanvas'), blurEl = $('blur'), frostEl = $('frost');
 
-let current = null; // { file, img, crop }
+let mode = 'crop';
+let current = null; // { file, img, url }
+
+/* ---------- 裁成 3:2 ---------- */
 
 // 置中裁成 3:2：太寬切左右，太高切上下
 function centerCrop(w, h) {
-  if (w / h > RATIO) {
-    const cw = Math.round(h * RATIO);
+  if (w / h > CROP_RATIO) {
+    const cw = Math.round(h * CROP_RATIO);
     return { x: Math.floor((w - cw) / 2), y: 0, w: cw, h };
   }
-  const ch = Math.round(w / RATIO);
+  const ch = Math.round(w / CROP_RATIO);
   return { x: 0, y: Math.floor((h - ch) / 2), w, h: ch };
 }
 
-function load(file) {
-  if (!file || !file.type.startsWith('image/')) return;
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.onload = () => {
-    if (current) URL.revokeObjectURL(current.url);
-    const crop = centerCrop(img.naturalWidth, img.naturalHeight);
-    current = { file, img, crop, url };
-    preview.src = url;
-    drawOverlay();
-    const ratio = (img.naturalWidth / img.naturalHeight).toFixed(2);
-    info.innerHTML = `原圖 ${img.naturalWidth}×${img.naturalHeight}（${ratio}:1）→ <b>${crop.w}×${crop.h}</b>`;
-    app.classList.add('has-image');
-  };
-  img.onerror = () => alertInline('這個檔案讀不出來，換一張試試。');
-  img.src = url;
+function renderCrop(img) {
+  const c = centerCrop(img.naturalWidth, img.naturalHeight);
+  const canvas = document.createElement('canvas');
+  canvas.width = c.w;
+  canvas.height = c.h;
+  canvas.getContext('2d').drawImage(img, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
+  return canvas;
 }
 
-function drawOverlay() {
-  frame.querySelectorAll('.cut, .keep').forEach((el) => el.remove());
-  const { img, crop } = current;
+/* ---------- 延伸成 1.91:1 ---------- */
+
+function extendSize(w, h) {
+  const outW = Math.round(h * OG_RATIO);
+  return { outW, ext: Math.floor((outW - w) / 2) };
+}
+
+// 三次 box blur 近似高斯模糊；邊緣用最近的像素補
+function boxBlur(data, w, h, r) {
+  if (r < 1) return;
+  const tmp = new Uint8ClampedArray(data.length);
+  const pass = (src, dst, horizontal) => {
+    const len = horizontal ? w : h, lines = horizontal ? h : w;
+    const div = r * 2 + 1;
+    for (let line = 0; line < lines; line++) {
+      const idx = (i) => horizontal ? (line * w + i) * 4 : (i * w + line) * 4;
+      for (let ch = 0; ch < 4; ch++) {
+        let sum = 0;
+        for (let i = -r; i <= r; i++) sum += src[idx(Math.min(len - 1, Math.max(0, i))) + ch];
+        for (let i = 0; i < len; i++) {
+          dst[idx(i) + ch] = sum / div;
+          sum += src[idx(Math.min(len - 1, i + r + 1)) + ch] - src[idx(Math.max(0, i - r)) + ch];
+        }
+      }
+    }
+  };
+  for (let k = 0; k < 3; k++) {
+    pass(data, tmp, true);
+    pass(tmp, data, false);
+  }
+}
+
+// 固定種子的亂數，讓預覽和下載的顆粒長得一樣
+function rng(seed) {
+  return () => {
+    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
+    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+    return ((t ^ t >>> 14) >>> 0) / 4294967296;
+  };
+}
+
+// 做一側的延伸條：取原圖邊緣同寬一條 → 鏡像 → 模糊 → 毛玻璃（疊白＋細顆粒）
+function makeStrip(src, W, H, ext, side, blur, frost) {
+  const sw = Math.min(ext, W); // 原圖比延伸還窄時，拿整張去拉
+  const strip = document.createElement('canvas');
+  strip.width = ext;
+  strip.height = H;
+  const ctx = strip.getContext('2d');
+  ctx.translate(ext, 0);
+  ctx.scale(-1, 1);
+  const sx = side === 'left' ? 0 : W - sw;
+  ctx.drawImage(src, sx, 0, sw, H, 0, 0, ext, H);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+
+  const img = ctx.getImageData(0, 0, ext, H);
+  const sigma = (blur / 100) * H * 0.06;
+  boxBlur(img.data, ext, H, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
+
+  const white = (frost / 100) * 0.45;
+  const grain = (frost / 100) * 22;
+  const rand = rng(side === 'left' ? 1 : 2);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (rand() - 0.5) * grain;
+    for (let c = 0; c < 3; c++) d[i + c] = d[i + c] * (1 - white) + 255 * white + n;
+  }
+  ctx.putImageData(img, 0, 0);
+  return strip;
+}
+
+// src 可以是原圖或縮小過的預覽版；回傳完成的 canvas
+function renderExtend(src, W, H, blur, frost) {
+  const { outW, ext } = extendSize(W, H);
+  const out = document.createElement('canvas');
+  out.width = outW;
+  out.height = H;
+  const ctx = out.getContext('2d');
+  ctx.drawImage(makeStrip(src, W, H, ext, 'left', blur, frost), 0, 0);
+  ctx.drawImage(makeStrip(src, W, H, outW - W - ext, 'right', blur, frost), ext + W, 0);
+  ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+  return { canvas: out, ext };
+}
+
+function previewSource(img) {
+  const scale = Math.min(1, PREVIEW_MAX_H / img.naturalHeight);
+  const W = Math.round(img.naturalWidth * scale), H = Math.round(img.naturalHeight * scale);
+  const c = document.createElement('canvas');
+  c.width = W;
+  c.height = H;
+  c.getContext('2d').drawImage(img, 0, 0, W, H);
+  return { src: c, W, H };
+}
+
+/* ---------- 畫面 ---------- */
+
+function canExtend() {
+  const { img } = current;
+  return extendSize(img.naturalWidth, img.naturalHeight).ext > 0;
+}
+
+function refresh() {
+  if (!current) return;
+  const { img } = current;
   const W = img.naturalWidth, H = img.naturalHeight;
+  const ratio = (W / H).toFixed(2);
+  frame.querySelectorAll('.cut, .keep, .seam').forEach((el) => el.remove());
+
+  if (mode === 'crop') {
+    const c = centerCrop(W, H);
+    drawCropOverlay(c, W, H);
+    info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）→ <b>${c.w}×${c.h}</b>`;
+    $('download').disabled = false;
+    return;
+  }
+
+  if (!canExtend()) {
+    canvasEl.width = 0;
+    preview.style.display = 'block';
+    info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）已經是 1.91:1 或更寬，不用延伸。`;
+    $('download').disabled = true;
+    return;
+  }
+  preview.style.display = '';
+  const p = previewSource(img);
+  const { canvas, ext } = renderExtend(p.src, p.W, p.H, +blurEl.value, +frostEl.value);
+  canvasEl.width = canvas.width;
+  canvasEl.height = canvas.height;
+  canvasEl.getContext('2d').drawImage(canvas, 0, 0);
+  for (const x of [ext, ext + p.W]) {
+    const s = document.createElement('div');
+    s.className = 'seam';
+    s.style.left = (x / canvas.width * 100) + '%';
+    frame.appendChild(s);
+  }
+  const { outW } = extendSize(W, H);
+  info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）→ <b>${outW}×${H}</b>`;
+  $('download').disabled = false;
+}
+
+function drawCropOverlay(crop, W, H) {
   const pct = (v, t) => (v / t * 100) + '%';
   const add = (cls, l, t, w, h) => {
     const d = document.createElement('div');
@@ -147,25 +314,45 @@ function drawOverlay() {
   add('keep', crop.x, crop.y, crop.w, crop.h);
 }
 
-function alertInline(msg) {
-  drop.querySelector('span').textContent = msg;
+function setMode(m) {
+  mode = m;
+  app.classList.toggle('mode-crop', m === 'crop');
+  app.classList.toggle('mode-extend', m === 'extend');
+  document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.mode === m));
+  $('sub').textContent = SUBTITLE[m];
+  refresh();
+}
+
+function load(file) {
+  if (!file || !file.type.startsWith('image/')) return;
+  const url = URL.createObjectURL(file);
+  const img = new Image();
+  img.onload = () => {
+    if (current) URL.revokeObjectURL(current.url);
+    current = { file, img, url };
+    preview.src = url;
+    app.classList.add('has-image');
+    refresh();
+  };
+  img.onerror = () => { $('dropHint').textContent = '這個檔案讀不出來，換一張試試。'; };
+  img.src = url;
 }
 
 function download() {
-  const { file, img, crop } = current;
-  const canvas = document.createElement('canvas');
-  canvas.width = crop.w;
-  canvas.height = crop.h;
-  canvas.getContext('2d').drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
+  const { file, img } = current;
+  const canvas = mode === 'crop'
+    ? renderCrop(img)
+    : renderExtend(img, img.naturalWidth, img.naturalHeight, +blurEl.value, +frostEl.value).canvas;
 
   const type = OUTPUT_TYPES.includes(file.type) ? file.type : 'image/png';
   const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[type];
   const base = (file.name || 'image').replace(/\.[^.]+$/, '');
+  const suffix = mode === 'crop' ? '3x2' : '1.91x1';
 
   canvas.toBlob((blob) => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${base}-3x2.${ext}`;
+    a.download = `${base}-${suffix}.${ext}`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -173,10 +360,17 @@ function download() {
   }, type, 0.95);
 }
 
+function syncOutputs() {
+  $('blurOut').textContent = blurEl.value;
+  $('frostOut').textContent = frostEl.value;
+}
+
+/* ---------- 事件 ---------- */
+
+document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
 fileInput.addEventListener('change', () => load(fileInput.files[0]));
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
-drop.addEventListener('drop', (e) => load(e.dataTransfer.files[0]));
 // 整頁都能接拖放，避免拖偏了瀏覽器直接打開圖片
 window.addEventListener('dragover', (e) => e.preventDefault());
 window.addEventListener('drop', (e) => { e.preventDefault(); load(e.dataTransfer.files[0]); });
@@ -184,12 +378,30 @@ window.addEventListener('paste', (e) => {
   const item = [...e.clipboardData.items].find((i) => i.type.startsWith('image/'));
   if (item) load(item.getAsFile());
 });
+
+let pending = 0;
+[blurEl, frostEl].forEach((el) => el.addEventListener('input', () => {
+  syncOutputs();
+  cancelAnimationFrame(pending);
+  pending = requestAnimationFrame(refresh);
+}));
+$('reset').addEventListener('click', () => {
+  blurEl.value = DEFAULTS.blur;
+  frostEl.value = DEFAULTS.frost;
+  syncOutputs();
+  refresh();
+});
 $('download').addEventListener('click', download);
 $('again').addEventListener('click', () => {
   app.classList.remove('has-image');
   fileInput.value = '';
   fileInput.click();
 });
+
+blurEl.value = DEFAULTS.blur;
+frostEl.value = DEFAULTS.frost;
+syncOutputs();
+setMode(location.hash === '#extend' ? 'extend' : 'crop');
 </script>
 </body>
 </html>
