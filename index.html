@@ -110,10 +110,12 @@
           <option value="progressive">B 漸進模糊</option>
           <option value="stretch">C 邊緣拉伸</option>
           <option value="backdrop">E 整張模糊當背景</option>
+          <option value="solid">F 單色漸層</option>
         </select>
       </label>
       <label id="featherRow">接縫柔化 <input type="range" id="feather" min="0" max="100"> <output id="featherOut"></output></label>
       <label>D 陰影 <input type="range" id="shadow" min="0" max="100"> <output id="shadowOut"></output></label>
+      <label>暗角 <input type="range" id="vignette" min="0" max="100"> <output id="vignetteOut"></output></label>
       <button class="reset" id="reset">回預設</button>
       <button class="reset" id="peek" aria-pressed="false" title="按住空白鍵也可以">預覽（按住空白鍵）</button>
     </div>
@@ -130,7 +132,7 @@
 <script>
 const CROP_RATIO = 3 / 2;
 const OG_RATIO = 1200 / 630;          // OG 圖標準比例，約 1.905
-const DEFAULTS = { method: 'feather', blur: 40, feather: 40, shadow: 0 };
+const DEFAULTS = { method: 'feather', blur: 40, feather: 15, shadow: 0, vignette: 0 };
 const PREVIEW_MAX_H = 720;            // 預覽用縮小版算，下載才用原尺寸
 const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const SUBTITLE = {
@@ -141,7 +143,7 @@ const SUBTITLE = {
 const $ = (id) => document.getElementById(id);
 const app = $('app'), drop = $('drop'), fileInput = $('file');
 const preview = $('preview'), frame = $('frame'), info = $('info');
-const canvasEl = $('extendCanvas'), blurEl = $('blur'), featherEl = $('feather'), shadowEl = $('shadow'), methodEl = $('method');
+const canvasEl = $('extendCanvas'), blurEl = $('blur'), featherEl = $('feather'), shadowEl = $('shadow'), vignetteEl = $('vignette'), methodEl = $('method');
 
 let mode = 'crop';
 let current = null; // { file, img, url }
@@ -256,7 +258,7 @@ const METHODS = {
     const out = blurCanvas(mirrored(src, W, H, ext, outW), o.blur);
     const sharp = blank(W, H);
     sharp.getContext('2d').drawImage(src, 0, 0, W, H);
-    const t = Math.min(0.5, (o.feather / 100) * 0.15);
+    const t = Math.min(0.5, (o.feather / 100) * 0.4);
     if (t > 0) maskX(sharp, [[0, 0], [t, 1], [1 - t, 1], [1, 0]]);
     out.getContext('2d').drawImage(sharp, ext, 0);
     return out;
@@ -276,6 +278,52 @@ const METHODS = {
     const ctx = out.getContext('2d');
     ctx.drawImage(src, 0, 0, 1, H, 0, 0, ext, H);
     ctx.drawImage(src, W - 1, 0, 1, H, ext + W, 0, outW - W - ext, H);
+    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+    blurCanvas(out, o.blur);
+    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+    return out;
+  },
+  // F 單色漸層：每一列取原圖最邊緣的顏色，往外淡成整條邊的平均色；不會有鏡像的字或臉
+  solid(src, W, H, ext, outW, o) {
+    const s = blank(W, H);
+    const sctx = s.getContext('2d');
+    sctx.drawImage(src, 0, 0, W, H);
+    const px = sctx.getImageData(0, 0, W, H).data;
+    const edge = (x0, y) => {
+      const c = [0, 0, 0];
+      for (let x = x0; x < x0 + 3; x++) for (let k = 0; k < 3; k++) c[k] += px[(y * W + x) * 4 + k] / 3;
+      return c;
+    };
+    const out = blank(outW, H);
+    const ctx = out.getContext('2d');
+    const img = ctx.createImageData(outW, H);
+    const d = img.data;
+    const sides = [
+      { x0: 0, from: ext - 1, to: 0 },                         // 左：接縫在 ext-1，往左到 0
+      { x0: Math.max(0, W - 3), from: ext + W, to: outW - 1 },  // 右：接縫在 ext+W，往右到底
+    ];
+    for (const side of sides) {
+      const rows = [];
+      const avg = [0, 0, 0];
+      for (let y = 0; y < H; y++) {
+        const c = edge(side.x0, y);
+        rows.push(c);
+        for (let k = 0; k < 3; k++) avg[k] += c[k] / H;
+      }
+      const len = Math.abs(side.to - side.from) || 1;
+      const step = side.to >= side.from ? 1 : -1;
+      for (let y = 0; y < H; y++) {
+        for (let i = 0, x = side.from; i <= len; i++, x += step) {
+          let t = i / len;
+          t = t * t * (3 - 2 * t); // smoothstep，兩端比較柔
+          const j = (y * outW + x) * 4;
+          for (let k = 0; k < 3; k++) d[j + k] = rows[y][k] * (1 - t) + avg[k] * t;
+          d[j + 3] = 255;
+        }
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    // 模糊前先把原圖放進中間，不然接縫會跟透明的像素混在一起、變成一條淡線
     ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
     blurCanvas(out, o.blur);
     ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
@@ -309,11 +357,29 @@ function drawShadow(ctx, W, H, ext, outW, shadow) {
   ctx.fillRect(ext + W, 0, s, H);
 }
 
+// 暗角：從最外側往內由深變淺，越過接縫、進到原圖裡約 10% 才消失
+function drawVignette(ctx, W, H, ext, outW, vignette) {
+  if (vignette <= 0) return;
+  const a = (vignette / 100) * 0.85;
+  const reach = ext + W * 0.1;
+  const l = ctx.createLinearGradient(0, 0, reach, 0);
+  l.addColorStop(0, `rgba(0,0,0,${a})`);
+  l.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = l;
+  ctx.fillRect(0, 0, reach, H);
+  const r = ctx.createLinearGradient(outW, 0, outW - reach, 0);
+  r.addColorStop(0, `rgba(0,0,0,${a})`);
+  r.addColorStop(1, 'rgba(0,0,0,0)');
+  ctx.fillStyle = r;
+  ctx.fillRect(outW - reach, 0, reach, H);
+}
+
 // src 可以是原圖或縮小過的預覽版；回傳完成的 canvas
 function renderExtend(src, W, H, opts) {
   const { outW, ext } = extendSize(W, H);
   const out = METHODS[opts.method](src, W, H, ext, outW, opts);
   drawShadow(out.getContext('2d'), W, H, ext, outW, opts.shadow);
+  drawVignette(out.getContext('2d'), W, H, ext, outW, opts.vignette);
   return { canvas: out, ext };
 }
 
@@ -439,13 +505,14 @@ function download() {
 }
 
 function effectOpts() {
-  return { method: methodEl.value, blur: +blurEl.value, feather: +featherEl.value, shadow: +shadowEl.value };
+  return { method: methodEl.value, blur: +blurEl.value, feather: +featherEl.value, shadow: +shadowEl.value, vignette: +vignetteEl.value };
 }
 
 function syncOutputs() {
   $('blurOut').textContent = blurEl.value;
   $('featherOut').textContent = featherEl.value;
   $('shadowOut').textContent = shadowEl.value;
+  $('vignetteOut').textContent = vignetteEl.value;
   // 接縫柔化只有 A 用得到
   $('featherRow').style.display = methodEl.value === 'feather' ? '' : 'none';
 }
@@ -465,7 +532,7 @@ window.addEventListener('paste', (e) => {
 });
 
 let pending = 0;
-[blurEl, featherEl, shadowEl, methodEl].forEach((el) => el.addEventListener('input', () => {
+[blurEl, featherEl, shadowEl, vignetteEl, methodEl].forEach((el) => el.addEventListener('input', () => {
   syncOutputs();
   cancelAnimationFrame(pending);
   pending = requestAnimationFrame(refresh);
@@ -503,6 +570,7 @@ function applyDefaults() {
   blurEl.value = DEFAULTS.blur;
   featherEl.value = DEFAULTS.feather;
   shadowEl.value = DEFAULTS.shadow;
+  vignetteEl.value = DEFAULTS.vignette;
   methodEl.value = DEFAULTS.method;
   syncOutputs();
 }
