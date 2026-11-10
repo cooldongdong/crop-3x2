@@ -27,9 +27,10 @@
   h1 { font-size: 22px; margin: 0 0 4px; font-weight: 600; }
   .sub { color: var(--muted); margin: 0 0 20px; font-size: 14px; }
 
-  .modes { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 3px; margin-bottom: 20px; }
-  .modes button { border: 0; border-radius: 6px; padding: 6px 14px; color: var(--muted); }
-  .modes button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 9px; padding: 3px; }
+  .seg button { border: 0; border-radius: 6px; padding: 6px 14px; color: var(--muted); display: inline-flex; align-items: center; gap: 6px; }
+  .seg button[aria-pressed="true"] { background: var(--accent); color: var(--bg); font-weight: 600; }
+  .modes { margin-bottom: 20px; }
 
   .drop {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -52,21 +53,24 @@
     background-image: repeating-linear-gradient(135deg, transparent 0 6px, rgba(255,255,255,.08) 6px 12px);
   }
   .keep { position: absolute; outline: 2px solid #fff; outline-offset: -1px; pointer-events: none; }
-  .peek .seam { display: none; }
   .seam { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(255,255,255,.7); pointer-events: none; }
+  .peek .seam { display: none; }
 
-  /* 模式切換：crop 顯示 img＋遮罩，extend 顯示 canvas＋滑桿 */
+  /* 模式切換：crop 顯示 img＋遮罩，extend 顯示 canvas＋控制項 */
   #extendCanvas, .controls { display: none; }
   .mode-extend #preview, .mode-extend .cut, .mode-extend .keep { display: none; }
   .mode-extend #extendCanvas { display: block; }
   .mode-extend .controls { display: flex; }
 
-  .controls { flex-wrap: wrap; gap: 8px 28px; margin-top: 16px; font-size: 14px; }
+  .controls { flex-wrap: wrap; align-items: center; gap: 12px 28px; margin-top: 16px; font-size: 14px; }
   .controls label { display: flex; align-items: center; gap: 10px; }
-  .controls input[type=range] { width: 180px; accent-color: var(--accent); }
-  .controls select { font: inherit; font-size: 14px; padding: 4px 6px; border-radius: 6px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  .controls input[type=range] { width: 160px; accent-color: var(--accent); }
   .controls output { width: 2.5em; color: var(--muted); font-variant-numeric: tabular-nums; }
-  .controls .reset { padding: 4px 10px; font-size: 13px; }
+  .controls .small { padding: 4px 10px; font-size: 13px; }
+  .colors { display: flex; align-items: center; gap: 10px; }
+  .colors .seg button { font-size: 13px; padding: 4px 10px; }
+  .swatch { width: 14px; height: 14px; border-radius: 3px; border: 1px solid rgba(127,127,127,.5); display: inline-block; }
+  .colors input[type=color] { position: absolute; opacity: 0; pointer-events: none; width: 0; height: 0; }
 
   .bar { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
   .info { flex: 1; min-width: 200px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
@@ -86,7 +90,7 @@
   <h1>3:2 ⇄ 1.91:1</h1>
   <p class="sub" id="sub"></p>
 
-  <div class="modes" role="group" aria-label="模式">
+  <div class="seg modes" role="group" aria-label="模式">
     <button data-mode="crop" aria-pressed="true">裁成 3:2</button>
     <button data-mode="extend" aria-pressed="false">延伸成 1.91:1</button>
   </div>
@@ -104,20 +108,19 @@
     </div>
     <div class="controls">
       <label>模糊 <input type="range" id="blur" min="0" max="100"> <output id="blurOut"></output></label>
-      <label>接縫做法
-        <select id="method">
-          <option value="feather">A 漸層融合</option>
-          <option value="progressive">B 漸進模糊</option>
-          <option value="stretch">C 邊緣拉伸</option>
-          <option value="backdrop">E 整張模糊當背景</option>
-          <option value="solid">F 單色漸層</option>
-        </select>
-      </label>
-      <label id="featherRow">接縫柔化 <input type="range" id="feather" min="0" max="100"> <output id="featherOut"></output></label>
-      <label>D 陰影 <input type="range" id="shadow" min="0" max="100"> <output id="shadowOut"></output></label>
+      <label>接縫柔化 <input type="range" id="feather" min="0" max="100"> <output id="featherOut"></output></label>
       <label>暗角 <input type="range" id="vignette" min="0" max="100"> <output id="vignetteOut"></output></label>
-      <button class="reset" id="reset">回預設</button>
-      <button class="reset" id="peek" aria-pressed="false" title="按住空白鍵也可以">預覽（按住空白鍵）</button>
+      <div class="colors">
+        <span>暗角顏色</span>
+        <div class="seg" role="group" aria-label="暗角顏色">
+          <button data-color="black" aria-pressed="true"><span class="swatch" style="background:#000"></span>黑色</button>
+          <button data-color="dominant" aria-pressed="false"><span class="swatch" id="dominantSwatch"></span>圖片主色</button>
+          <button data-color="custom" aria-pressed="false"><span class="swatch" id="customSwatch"></span>自訂</button>
+        </div>
+        <input type="color" id="customColor" value="#1d3557">
+      </div>
+      <button class="small" id="reset">回預設</button>
+      <button class="small" id="peek" aria-pressed="false">預覽（按住空白鍵）</button>
     </div>
     <div class="bar">
       <div class="info" id="info"></div>
@@ -132,7 +135,7 @@
 <script>
 const CROP_RATIO = 3 / 2;
 const OG_RATIO = 1200 / 630;          // OG 圖標準比例，約 1.905
-const DEFAULTS = { method: 'feather', blur: 40, feather: 15, shadow: 0, vignette: 0 };
+const DEFAULTS = { blur: 40, feather: 10, vignette: 100, color: 'black' };
 const PREVIEW_MAX_H = 720;            // 預覽用縮小版算，下載才用原尺寸
 const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const SUBTITLE = {
@@ -143,10 +146,21 @@ const SUBTITLE = {
 const $ = (id) => document.getElementById(id);
 const app = $('app'), drop = $('drop'), fileInput = $('file');
 const preview = $('preview'), frame = $('frame'), info = $('info');
-const canvasEl = $('extendCanvas'), blurEl = $('blur'), featherEl = $('feather'), shadowEl = $('shadow'), vignetteEl = $('vignette'), methodEl = $('method');
+const canvasEl = $('extendCanvas'), blurEl = $('blur'), featherEl = $('feather'), vignetteEl = $('vignette');
+const customColorEl = $('customColor');
 
 let mode = 'crop';
-let current = null; // { file, img, url }
+let colorChoice = DEFAULTS.color;
+let current = null; // { file, img, url, dominant }
+
+/* ---------- 共用 ---------- */
+
+function blank(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  return c;
+}
 
 /* ---------- 裁成 3:2 ---------- */
 
@@ -162,9 +176,7 @@ function centerCrop(w, h) {
 
 function renderCrop(img) {
   const c = centerCrop(img.naturalWidth, img.naturalHeight);
-  const canvas = document.createElement('canvas');
-  canvas.width = c.w;
-  canvas.height = c.h;
+  const canvas = blank(c.w, c.h);
   canvas.getContext('2d').drawImage(img, c.x, c.y, c.w, c.h, 0, 0, c.w, c.h);
   return canvas;
 }
@@ -201,6 +213,15 @@ function boxBlur(data, w, h, r) {
   }
 }
 
+function blurCanvas(canvas, blur) {
+  const ctx = canvas.getContext('2d');
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const sigma = (blur / 100) * canvas.height * 0.06;
+  boxBlur(img.data, canvas.width, canvas.height, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
+  ctx.putImageData(img, 0, 0);
+  return canvas;
+}
+
 // 把原圖邊緣同寬的一條鏡像貼到外側；接縫兩邊的像素因此是連續的
 function drawMirror(ctx, src, W, H, destX, width, side) {
   if (width <= 0) return;
@@ -213,192 +234,97 @@ function drawMirror(ctx, src, W, H, destX, width, side) {
   ctx.restore();
 }
 
-function blurCanvas(canvas, blur) {
-  const ctx = canvas.getContext('2d');
-  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const sigma = (blur / 100) * canvas.height * 0.06;
-  boxBlur(img.data, canvas.width, canvas.height, Math.round(Math.sqrt(4 * sigma * sigma / 3 + 1) / 2));
-  ctx.putImageData(img, 0, 0);
-  return canvas;
-}
-
-function blank(w, h) {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  return c;
-}
-
-// 對 canvas 套水平方向的透明度遮罩；stops 是 [位置 0–1, 不透明度] 的清單
-function maskX(canvas, stops) {
-  const ctx = canvas.getContext('2d');
-  const g = ctx.createLinearGradient(0, 0, canvas.width, 0);
-  for (const [pos, a] of stops) g.addColorStop(Math.min(1, Math.max(0, pos)), `rgba(0,0,0,${a})`);
-  ctx.globalCompositeOperation = 'destination-in';
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.globalCompositeOperation = 'source-over';
-  return canvas;
-}
-
-// 原圖＋兩側鏡像（還沒模糊）
-function mirrored(src, W, H, ext, outW) {
-  const c = blank(outW, H);
+// 圖片主色：縮小後把顏色分桶（每色 16 階），取最多的那一桶的平均色
+function dominantColor(img) {
+  const size = 64;
+  const c = blank(size, size);
   const ctx = c.getContext('2d');
-  drawMirror(ctx, src, W, H, 0, ext, 'left');
-  drawMirror(ctx, src, W, H, ext + W, outW - W - ext, 'right');
-  ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-  return c;
+  ctx.drawImage(img, 0, 0, size, size);
+  const d = ctx.getImageData(0, 0, size, size).data;
+  const buckets = new Map();
+  for (let i = 0; i < d.length; i += 4) {
+    const key = (d[i] >> 4) << 8 | (d[i + 1] >> 4) << 4 | (d[i + 2] >> 4);
+    const b = buckets.get(key) || [0, 0, 0, 0];
+    b[0] += d[i]; b[1] += d[i + 1]; b[2] += d[i + 2]; b[3]++;
+    buckets.set(key, b);
+  }
+  let best = null;
+  for (const b of buckets.values()) if (!best || b[3] > best[3]) best = b;
+  const hex = (v) => Math.round(v / best[3]).toString(16).padStart(2, '0');
+  return '#' + hex(best[0]) + hex(best[1]) + hex(best[2]);
 }
 
-// 四種接縫做法；都回傳完整的 outW×H 畫面（原圖已經疊好）
-const METHODS = {
-  // A 漸層融合：整張（原圖＋鏡像）一起模糊當底，原圖左右邊緣淡出疊回去
-  feather(src, W, H, ext, outW, o) {
-    const out = blurCanvas(mirrored(src, W, H, ext, outW), o.blur);
-    const sharp = blank(W, H);
-    sharp.getContext('2d').drawImage(src, 0, 0, W, H);
-    const t = Math.min(0.5, (o.feather / 100) * 0.4);
-    if (t > 0) maskX(sharp, [[0, 0], [t, 1], [1 - t, 1], [1, 0]]);
-    out.getContext('2d').drawImage(sharp, ext, 0);
-    return out;
-  },
-  // B 漸進模糊：原圖完全清楚；延伸區在接縫處是清楚的鏡像，越往外越糊
-  progressive(src, W, H, ext, outW, o) {
-    const out = blurCanvas(mirrored(src, W, H, ext, outW), o.blur);
-    const sharp = mirrored(src, W, H, ext, outW);
-    const l = ext / outW, r = (ext + W) / outW;
-    maskX(sharp, [[0, 0], [l, 1], [r, 1], [1, 0]]);
-    out.getContext('2d').drawImage(sharp, 0, 0);
-    return out;
-  },
-  // C 邊緣拉伸：把原圖最邊緣一排像素往外拉成條紋，再模糊；原圖完全清楚
-  stretch(src, W, H, ext, outW, o) {
-    const out = blank(outW, H);
-    const ctx = out.getContext('2d');
-    ctx.drawImage(src, 0, 0, 1, H, 0, 0, ext, H);
-    ctx.drawImage(src, W - 1, 0, 1, H, ext + W, 0, outW - W - ext, H);
-    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-    blurCanvas(out, o.blur);
-    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-    return out;
-  },
-  // F 單色漸層：每一列取原圖最邊緣的顏色，往外淡成整條邊的平均色；不會有鏡像的字或臉
-  solid(src, W, H, ext, outW, o) {
-    const s = blank(W, H);
-    const sctx = s.getContext('2d');
-    sctx.drawImage(src, 0, 0, W, H);
-    const px = sctx.getImageData(0, 0, W, H).data;
-    const edge = (x0, y) => {
-      const c = [0, 0, 0];
-      for (let x = x0; x < x0 + 3; x++) for (let k = 0; k < 3; k++) c[k] += px[(y * W + x) * 4 + k] / 3;
-      return c;
-    };
-    const out = blank(outW, H);
-    const ctx = out.getContext('2d');
-    const img = ctx.createImageData(outW, H);
-    const d = img.data;
-    const sides = [
-      { x0: 0, from: ext - 1, to: 0 },                         // 左：接縫在 ext-1，往左到 0
-      { x0: Math.max(0, W - 3), from: ext + W, to: outW - 1 },  // 右：接縫在 ext+W，往右到底
-    ];
-    for (const side of sides) {
-      const rows = [];
-      const avg = [0, 0, 0];
-      for (let y = 0; y < H; y++) {
-        const c = edge(side.x0, y);
-        rows.push(c);
-        for (let k = 0; k < 3; k++) avg[k] += c[k] / H;
-      }
-      const len = Math.abs(side.to - side.from) || 1;
-      const step = side.to >= side.from ? 1 : -1;
-      for (let y = 0; y < H; y++) {
-        for (let i = 0, x = side.from; i <= len; i++, x += step) {
-          let t = i / len;
-          t = t * t * (3 - 2 * t); // smoothstep，兩端比較柔
-          const j = (y * outW + x) * 4;
-          for (let k = 0; k < 3; k++) d[j + k] = rows[y][k] * (1 - t) + avg[k] * t;
-          d[j + 3] = 255;
-        }
-      }
-    }
-    ctx.putImageData(img, 0, 0);
-    // 模糊前先把原圖放進中間，不然接縫會跟透明的像素混在一起、變成一條淡線
-    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-    blurCanvas(out, o.blur);
-    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-    return out;
-  },
-  // E 整張模糊當背景：整張圖放大鋪滿再模糊，原圖疊在中間
-  backdrop(src, W, H, ext, outW, o) {
-    const out = blank(outW, H);
-    const ctx = out.getContext('2d');
-    const scale = outW / W, bh = H * scale;
-    ctx.drawImage(src, 0, (H - bh) / 2, outW, bh);
-    blurCanvas(out, Math.max(o.blur, 20));
-    ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
-    return out;
-  },
-};
-
-// D 卡片陰影：接縫外側往外一段由深變淺，可以疊在任何做法上
-function drawShadow(ctx, W, H, ext, outW, shadow) {
-  if (shadow <= 0) return;
-  const a = (shadow / 100) * 0.55, s = Math.min(ext, H * 0.08);
-  const l = ctx.createLinearGradient(ext, 0, ext - s, 0);
-  l.addColorStop(0, `rgba(0,0,0,${a})`);
-  l.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = l;
-  ctx.fillRect(ext - s, 0, s, H);
-  const r = ctx.createLinearGradient(ext + W, 0, ext + W + s, 0);
-  r.addColorStop(0, `rgba(0,0,0,${a})`);
-  r.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = r;
-  ctx.fillRect(ext + W, 0, s, H);
+function hexToRgb(hex) {
+  const n = parseInt(hex.slice(1), 16);
+  return [n >> 16 & 255, n >> 8 & 255, n & 255];
 }
 
 // 暗角：從最外側往內由深變淺，越過接縫、進到原圖裡約 10% 才消失
-function drawVignette(ctx, W, H, ext, outW, vignette) {
-  if (vignette <= 0) return;
-  const a = (vignette / 100) * 0.85;
+function drawVignette(ctx, W, H, ext, outW, strength, color) {
+  if (strength <= 0) return;
+  const [r, g, b] = hexToRgb(color);
+  const a = (strength / 100) * 0.85;
   const reach = ext + W * 0.1;
-  const l = ctx.createLinearGradient(0, 0, reach, 0);
-  l.addColorStop(0, `rgba(0,0,0,${a})`);
-  l.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = l;
-  ctx.fillRect(0, 0, reach, H);
-  const r = ctx.createLinearGradient(outW, 0, outW - reach, 0);
-  r.addColorStop(0, `rgba(0,0,0,${a})`);
-  r.addColorStop(1, 'rgba(0,0,0,0)');
-  ctx.fillStyle = r;
-  ctx.fillRect(outW - reach, 0, reach, H);
+  for (const [from, to] of [[0, reach], [outW, outW - reach]]) {
+    const grad = ctx.createLinearGradient(from, 0, to, 0);
+    grad.addColorStop(0, `rgba(${r},${g},${b},${a})`);
+    grad.addColorStop(1, `rgba(${r},${g},${b},0)`);
+    ctx.fillStyle = grad;
+    ctx.fillRect(Math.min(from, to), 0, reach, H);
+  }
 }
 
+// 底圖＝原圖＋兩側鏡像，整張一起模糊；原圖疊回中間時左右邊緣淡出，接縫才不會硬
+// 最後疊暗角，把接縫藏進由深到淺的漸層裡
 // src 可以是原圖或縮小過的預覽版；回傳完成的 canvas
-function renderExtend(src, W, H, opts) {
+function renderExtend(src, W, H, o) {
   const { outW, ext } = extendSize(W, H);
-  const out = METHODS[opts.method](src, W, H, ext, outW, opts);
-  drawShadow(out.getContext('2d'), W, H, ext, outW, opts.shadow);
-  drawVignette(out.getContext('2d'), W, H, ext, outW, opts.vignette);
+  const out = blank(outW, H);
+  const ctx = out.getContext('2d');
+  drawMirror(ctx, src, W, H, 0, ext, 'left');
+  drawMirror(ctx, src, W, H, ext + W, outW - W - ext, 'right');
+  ctx.drawImage(src, 0, 0, W, H, ext, 0, W, H);
+  blurCanvas(out, o.blur);
+
+  const sharp = blank(W, H);
+  const sctx = sharp.getContext('2d');
+  sctx.drawImage(src, 0, 0, W, H);
+  const t = Math.min(0.5, (o.feather / 100) * 0.4);
+  if (t > 0) {
+    const g = sctx.createLinearGradient(0, 0, W, 0);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(t, 'rgba(0,0,0,1)');
+    g.addColorStop(1 - t, 'rgba(0,0,0,1)');
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    sctx.globalCompositeOperation = 'destination-in';
+    sctx.fillStyle = g;
+    sctx.fillRect(0, 0, W, H);
+  }
+  ctx.drawImage(sharp, ext, 0);
+
+  drawVignette(ctx, W, H, ext, outW, o.vignette, o.color);
   return { canvas: out, ext };
 }
 
 function previewSource(img) {
   const scale = Math.min(1, PREVIEW_MAX_H / img.naturalHeight);
   const W = Math.round(img.naturalWidth * scale), H = Math.round(img.naturalHeight * scale);
-  const c = document.createElement('canvas');
-  c.width = W;
-  c.height = H;
+  const c = blank(W, H);
   c.getContext('2d').drawImage(img, 0, 0, W, H);
   return { src: c, W, H };
 }
 
-/* ---------- 畫面 ---------- */
-
-function canExtend() {
-  const { img } = current;
-  return extendSize(img.naturalWidth, img.naturalHeight).ext > 0;
+function vignetteColor() {
+  if (colorChoice === 'dominant' && current) return current.dominant;
+  if (colorChoice === 'custom') return customColorEl.value;
+  return '#000000';
 }
+
+function effectOpts() {
+  return { blur: +blurEl.value, feather: +featherEl.value, vignette: +vignetteEl.value, color: vignetteColor() };
+}
+
+/* ---------- 畫面 ---------- */
 
 function refresh() {
   if (!current) return;
@@ -415,7 +341,7 @@ function refresh() {
     return;
   }
 
-  if (!canExtend()) {
+  if (extendSize(W, H).ext <= 0) {
     canvasEl.width = 0;
     preview.style.display = 'block';
     info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）已經是 1.91:1 或更寬，不用延伸。`;
@@ -434,8 +360,7 @@ function refresh() {
     s.style.left = (x / canvas.width * 100) + '%';
     frame.appendChild(s);
   }
-  const { outW } = extendSize(W, H);
-  info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）→ <b>${outW}×${H}</b>`;
+  info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）→ <b>${extendSize(W, H).outW}×${H}</b>`;
   $('download').disabled = false;
 }
 
@@ -467,13 +392,20 @@ function setMode(m) {
   refresh();
 }
 
+function setColor(choice) {
+  colorChoice = choice;
+  document.querySelectorAll('[data-color]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.color === choice));
+  refresh();
+}
+
 function load(file) {
   if (!file || !file.type.startsWith('image/')) return;
   const url = URL.createObjectURL(file);
   const img = new Image();
   img.onload = () => {
     if (current) URL.revokeObjectURL(current.url);
-    current = { file, img, url };
+    current = { file, img, url, dominant: dominantColor(img) };
+    $('dominantSwatch').style.background = current.dominant;
     preview.src = url;
     app.classList.add('has-image');
     refresh();
@@ -504,22 +436,31 @@ function download() {
   }, type, 0.95);
 }
 
-function effectOpts() {
-  return { method: methodEl.value, blur: +blurEl.value, feather: +featherEl.value, shadow: +shadowEl.value, vignette: +vignetteEl.value };
-}
-
 function syncOutputs() {
   $('blurOut').textContent = blurEl.value;
   $('featherOut').textContent = featherEl.value;
-  $('shadowOut').textContent = shadowEl.value;
   $('vignetteOut').textContent = vignetteEl.value;
-  // 接縫柔化只有 A 用得到
-  $('featherRow').style.display = methodEl.value === 'feather' ? '' : 'none';
+  $('customSwatch').style.background = customColorEl.value;
+}
+
+function applyDefaults() {
+  blurEl.value = DEFAULTS.blur;
+  featherEl.value = DEFAULTS.feather;
+  vignetteEl.value = DEFAULTS.vignette;
+  colorChoice = DEFAULTS.color;
+  document.querySelectorAll('[data-color]').forEach((b) => b.setAttribute('aria-pressed', b.dataset.color === colorChoice));
+  syncOutputs();
 }
 
 /* ---------- 事件 ---------- */
 
 document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+document.querySelectorAll('[data-color]').forEach((b) => b.addEventListener('click', () => {
+  setColor(b.dataset.color);
+  if (b.dataset.color === 'custom') customColorEl.click(); // 「自訂」每次按都打開色盤
+}));
+customColorEl.addEventListener('input', () => { syncOutputs(); setColor('custom'); });
+
 fileInput.addEventListener('change', () => load(fileInput.files[0]));
 ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('over'); }));
 ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('over'); }));
@@ -532,7 +473,7 @@ window.addEventListener('paste', (e) => {
 });
 
 let pending = 0;
-[blurEl, featherEl, shadowEl, vignetteEl, methodEl].forEach((el) => el.addEventListener('input', () => {
+[blurEl, featherEl, vignetteEl].forEach((el) => el.addEventListener('input', () => {
   syncOutputs();
   cancelAnimationFrame(pending);
   pending = requestAnimationFrame(refresh);
@@ -550,7 +491,7 @@ const setPeek = (on) => {
 };
 $('peek').addEventListener('click', () => { peekLocked = !peekLocked; setPeek(peekLocked); });
 window.addEventListener('keydown', (e) => {
-  if (e.code !== 'Space' || e.target.matches('input[type=text], textarea')) return;
+  if (e.code !== 'Space') return;
   e.preventDefault(); // 別讓空白鍵捲動頁面或按到聚焦中的按鈕
   if (!e.repeat) setPeek(true);
 });
@@ -559,6 +500,7 @@ window.addEventListener('keyup', (e) => {
   e.preventDefault();
   setPeek(peekLocked);
 });
+
 $('download').addEventListener('click', download);
 $('again').addEventListener('click', () => {
   app.classList.remove('has-image');
@@ -566,14 +508,6 @@ $('again').addEventListener('click', () => {
   fileInput.click();
 });
 
-function applyDefaults() {
-  blurEl.value = DEFAULTS.blur;
-  featherEl.value = DEFAULTS.feather;
-  shadowEl.value = DEFAULTS.shadow;
-  vignetteEl.value = DEFAULTS.vignette;
-  methodEl.value = DEFAULTS.method;
-  syncOutputs();
-}
 applyDefaults();
 setMode(location.hash === '#extend' ? 'extend' : 'crop');
 </script>
