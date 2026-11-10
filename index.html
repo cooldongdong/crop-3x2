@@ -55,6 +55,10 @@
   .keep { position: absolute; outline: 2px solid #fff; outline-offset: -1px; pointer-events: none; }
   .seam { position: absolute; top: 0; bottom: 0; border-left: 1px dashed rgba(255,255,255,.7); pointer-events: none; }
   .peek .seam { display: none; }
+  #cropCanvas { display: none; }
+  .mode-crop.peek #preview, .mode-crop.peek .cut, .mode-crop.peek .keep { display: none !important; }
+  .mode-crop.peek #cropCanvas { display: block; }
+  .mode-crop.peek .frame { max-width: var(--crop-w, 100%); margin: 0 auto; }
 
   /* 模式切換：crop 顯示 img＋遮罩，extend 顯示 canvas＋控制項 */
   #extendCanvas, .controls { display: none; }
@@ -86,13 +90,13 @@
 </style>
 </head>
 <body>
-<main id="app" class="mode-crop">
+<main id="app" class="mode-extend">
   <h1>3:2 ⇄ 1.91:1</h1>
   <p class="sub" id="sub"></p>
 
   <div class="seg modes" role="group" aria-label="模式">
-    <button data-mode="crop" aria-pressed="true">裁成 3:2</button>
-    <button data-mode="extend" aria-pressed="false">延伸成 1.91:1</button>
+    <button data-mode="extend" aria-pressed="true">延伸成 1.91:1</button>
+    <button data-mode="crop" aria-pressed="false">裁成 3:2</button>
   </div>
 
   <label class="drop" id="drop">
@@ -105,6 +109,7 @@
     <div class="frame" id="frame">
       <img id="preview" alt="">
       <canvas id="extendCanvas"></canvas>
+      <canvas id="cropCanvas"></canvas>
     </div>
     <div class="controls">
       <label>模糊 <input type="range" id="blur" min="0" max="100"> <output id="blurOut"></output></label>
@@ -120,10 +125,10 @@
         <input type="color" id="customColor" value="#1d3557">
       </div>
       <button class="small" id="reset">回預設</button>
-      <button class="small" id="peek" aria-pressed="false">預覽（按住空白鍵）</button>
     </div>
     <div class="bar">
       <div class="info" id="info"></div>
+      <button id="peek" aria-pressed="false">預覽（按住空白鍵）</button>
       <button id="again">換一張</button>
       <button class="primary" id="download">下載</button>
     </div>
@@ -139,7 +144,7 @@ const DEFAULTS = { blur: 40, feather: 10, vignette: 100, color: 'black' };
 const PREVIEW_MAX_H = 720;            // 預覽用縮小版算，下載才用原尺寸
 const OUTPUT_TYPES = ['image/jpeg', 'image/png', 'image/webp'];
 const SUBTITLE = {
-  crop: '置中裁成 3:2，只留中間。斜線區域會被切掉。',
+  crop: '置中裁成 3:2，只留中間。斜線區域會被切掉，按住空白鍵可以看裁好的樣子。',
   extend: '原圖完整放中間，左右用邊緣鏡像、模糊補滿成 1.91:1。虛線是原圖的邊界，按住空白鍵可以先藏起來。',
 };
 
@@ -336,6 +341,7 @@ function refresh() {
   if (mode === 'crop') {
     const c = centerCrop(W, H);
     drawCropOverlay(c, W, H);
+    drawCropPreview(img, c);
     info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）→ <b>${c.w}×${c.h}</b>`;
     $('download').disabled = false;
     return;
@@ -362,6 +368,16 @@ function refresh() {
   }
   info.innerHTML = `原圖 ${W}×${H}（${ratio}:1）→ <b>${extendSize(W, H).outW}×${H}</b>`;
   $('download').disabled = false;
+}
+
+// 裁好的結果，給預覽用；縮小算，畫面上的寬度跟原圖預覽裡那塊一樣大
+function drawCropPreview(img, c) {
+  const scale = Math.min(1, PREVIEW_MAX_H / c.h);
+  const cv = $('cropCanvas');
+  cv.width = Math.round(c.w * scale);
+  cv.height = Math.round(c.h * scale);
+  cv.getContext('2d').drawImage(img, c.x, c.y, c.w, c.h, 0, 0, cv.width, cv.height);
+  frame.style.setProperty('--crop-w', (c.w / img.naturalWidth * 100) + '%');
 }
 
 function drawCropOverlay(crop, W, H) {
@@ -509,7 +525,7 @@ $('again').addEventListener('click', () => {
 });
 
 applyDefaults();
-setMode(location.hash === '#extend' ? 'extend' : 'crop');
+setMode(location.hash === '#crop' ? 'crop' : 'extend');
 </script>
 </body>
 </html>
